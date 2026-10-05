@@ -6,10 +6,12 @@
 # the loader metadata and the Minecraft/loader compile classpath differ.
 #
 #   pwsh tools\build.ps1                       # 1.20.1 / Forge 47.4.10
+#   pwsh tools\build.ps1 -Target fabric1201    # 1.20.1 / Fabric (loader 0.19.5)
+#   pwsh tools\build.ps1 -Target fabric1211    # 1.21.1 / Fabric
 #   pwsh tools\build.ps1 -Target neoforge1211  # 1.21.1 / NeoForge 21.1.x
-#   pwsh tools\build.ps1 -Target all           # both + the sources jar
+#   pwsh tools\build.ps1 -Target all           # all three + the sources jar
 param(
-  [ValidateSet('forge1201', 'neoforge1211', 'all')]
+  [ValidateSet('forge1201', 'fabric1201', 'fabric1211', 'neoforge1211', 'all')]
   [string]$Target = 'forge1201'
 )
 
@@ -21,6 +23,57 @@ $modId = 'watermedia_android_bridge'
 
 # ------------------------------------------------------------------ targets
 $targets = [ordered]@{
+  fabric1201   = @{
+    label     = 'Minecraft 1.20.1 / Fabric (loader 0.19.5+, Fabric API 0.92.x)'
+    mcVersion = '1.20.1'
+    packFormat = 15
+    suffix    = '+mc1.20.1-fabric'
+    loader    = 'fabric'
+    # Fabric reads the mixin configs from fabric.mod.json, no manifest attribute needed.
+    manifest  = @{}
+    # compile-only intermediary stub for net.minecraft.class_310 (see tools\fabric-stubs);
+    # the stub is valid for every Fabric target because intermediary names are stable
+    stubs     = @('tools\fabric-stubs')
+    classpath = @(
+      (Join-Path $mc 'libraries\net\fabricmc\fabric-loader\0.19.5\fabric-loader-0.19.5.jar'),
+      # net.fabricmc.fabric.api.* lives in Fabric API's nested module jars; the bundle jar
+      # itself only contains them under META-INF/jars, which javac cannot see, so
+      # tools/download-deps.ps1 (or the extraction in the README) unpacks them here.
+      (Join-Path $root 'vendor\downloads\fabric-api-modules\*'),
+      (Join-Path $mc 'libraries\net\fabricmc\sponge-mixin\0.12.5+mixin.0.8.5\sponge-mixin-0.12.5+mixin.0.8.5.jar'),
+      (Join-Path $mc 'libraries\org\lwjgl\lwjgl\3.3.1\lwjgl-3.3.1.jar'),
+      (Join-Path $mc 'libraries\org\lwjgl\lwjgl-opengl\3.3.1\lwjgl-opengl-3.3.1.jar'),
+      (Join-Path $mc 'libraries\net\java\dev\jna\jna\5.14.0\jna-5.14.0.jar'),
+      (Join-Path $mc 'libraries\org\apache\logging\log4j\log4j-api\2.19.0\log4j-api-2.19.0.jar'),
+      # compile against the OLDEST supported WATERMeDIA: that is what proves the 2.1.24
+      # lower bound of this target's dependency range
+      (Join-Path $root 'vendor\downloads\watermedia-2.1.24.jar'),
+      # ClientTickEvents.EndTick's parameter type, needed to compile the tick lambda
+      (Join-Path $mc 'libraries\net\minecraft\client\1.20.1-20230612.114412\client-1.20.1-20230612.114412-srg.jar')
+    )
+  }
+  fabric1211   = @{
+    label     = 'Minecraft 1.21.1 / Fabric (loader 0.19.5+, Fabric API 0.116.x)'
+    mcVersion = '1.21.1'
+    packFormat = 34
+    suffix    = '+mc1.21.1-fabric'
+    loader    = 'fabric'
+    manifest  = @{}
+    stubs     = @('tools\fabric-stubs')
+    classpath = @(
+      (Join-Path $mc 'libraries\net\fabricmc\fabric-loader\0.19.5\fabric-loader-0.19.5.jar'),
+      (Join-Path $root 'vendor\downloads\fabric-api-modules-1.21.1\*'),
+      (Join-Path $mc 'libraries\net\fabricmc\sponge-mixin\0.15.2+mixin.0.8.7\sponge-mixin-0.15.2+mixin.0.8.7.jar'),
+      (Join-Path $mc 'libraries\org\lwjgl\lwjgl\3.3.3\lwjgl-3.3.3.jar'),
+      (Join-Path $mc 'libraries\org\lwjgl\lwjgl-opengl\3.3.3\lwjgl-opengl-3.3.3.jar'),
+      (Join-Path $mc 'libraries\net\java\dev\jna\jna\5.14.0\jna-5.14.0.jar'),
+      (Join-Path $mc 'libraries\org\apache\logging\log4j\log4j-api\2.22.1\log4j-api-2.22.1.jar'),
+      # same reasoning as the 1.20.1 Fabric target: WATERMeDIA 2.1.24 is the oldest version
+      # this patch supports, so the sources are compiled against it
+      (Join-Path $root 'vendor\downloads\watermedia-2.1.24.jar'),
+      (Join-Path $mc 'libraries\net\minecraft\client\1.21.1-20240808.144430\client-1.21.1-20240808.144430-srg.jar')
+    )
+  }
   forge1201    = @{
     label     = 'Minecraft 1.20.1 / Forge 47.4.10'
     mcVersion = '1.20.1'
@@ -107,6 +160,31 @@ Write-Host 'SPDX licence headers present on every source file'
 $distDir = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
+# Copies a resource tree, expanding ${token} placeholders in the text resources.  Binary
+# resources (the native payload, images) are copied verbatim, and a text file without any
+# placeholder is written back unchanged.
+function Copy-Resources([string]$from, [string]$to, [hashtable]$tokens) {
+  $textExtensions = @('.json', '.toml', '.mcmeta', '.cfg', '.txt', '.properties')
+  foreach ($file in Get-ChildItem $from -Recurse -File) {
+    $relative = $file.FullName.Substring($from.Length).TrimStart('\', '/')
+    $destination = Join-Path $to $relative
+    New-Item -ItemType Directory -Force -Path (Split-Path $destination) | Out-Null
+    if ($textExtensions -contains $file.Extension.ToLowerInvariant()) {
+      $text = [System.IO.File]::ReadAllText($file.FullName)
+      $expanded = $text
+      foreach ($key in $tokens.Keys) {
+        $expanded = $expanded.Replace('${' + $key + '}', [string]$tokens[$key])
+      }
+      if ($expanded -match '\$\{[a-zA-Z]+\}') {
+        throw "unexpanded placeholder in $relative : $($Matches[0])"
+      }
+      [System.IO.File]::WriteAllText($destination, $expanded, (New-Object System.Text.UTF8Encoding($false)))
+    } else {
+      Copy-Item $file.FullName $destination -Force
+    }
+  }
+}
+
 function Build-Target([string]$name) {
   $target = $targets[$name]
   Write-Host ''
@@ -122,6 +200,26 @@ function Build-Target([string]$name) {
   $classes = Join-Path $root "build\classes\$name"
   if (Test-Path $classes) { Remove-Item $classes -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $classes | Out-Null
+
+  # Compile the target's compile-only stubs (Fabric needs an intermediary name for the
+  # client class, see tools\fabric-stubs) into their own directory: they go on the
+  # classpath but must never end up inside the mod jar.
+  if ($target.stubs) {
+    $stubOut = Join-Path $root "build\stubs\$name"
+    if (Test-Path $stubOut) { Remove-Item $stubOut -Recurse -Force }
+    New-Item -ItemType Directory -Force -Path $stubOut | Out-Null
+    foreach ($stubRoot in $target.stubs) {
+      $stubSources = @(Get-ChildItem (Join-Path $root $stubRoot) -Recurse -Filter *.java |
+          ForEach-Object { $_.FullName })
+      if ($stubSources.Count -gt 0) {
+        & $javac '-encoding', 'UTF-8', '--release', '17', '-proc:none',
+          '-nowarn', '-d', $stubOut @stubSources
+        if ($LASTEXITCODE -ne 0) { throw "stub compilation failed for $name (exit $LASTEXITCODE)" }
+        Write-Host "compiled $($stubSources.Count) compile-only stub(s) into $stubOut"
+      }
+    }
+    $cp = "$stubOut;$cp"
+  }
 
   $sources = @(Get-ChildItem (Join-Path $root 'src\main\java') -Recurse -Filter *.java |
       ForEach-Object { $_.FullName })
@@ -141,8 +239,18 @@ function Build-Target([string]$name) {
   & $javac @javacArgs
   if ($LASTEXITCODE -ne 0) { throw "compilation failed for $name (exit $LASTEXITCODE)" }
 
-  Copy-Item (Join-Path $root 'src\main\resources\*') -Destination $classes -Recurse -Force
-  Copy-Item (Join-Path $root "src\loader\$($target.loader)\resources\*") -Destination $classes -Recurse -Force
+  # Stage the resources with per-target token expansion: the loader metadata of the Fabric
+  # targets differs only in the Minecraft version and the pack format, so those files carry
+  # ${mcVersion}/${packFormat} placeholders instead of being duplicated per Minecraft version.
+  $tokens = @{
+    modId       = $modId
+    modVersion  = $version
+    mcVersion   = $target.mcVersion
+    packFormat  = $target.packFormat
+    loader      = $target.loader
+  }
+  Copy-Resources (Join-Path $root 'src\main\resources') $classes $tokens
+  Copy-Resources (Join-Path $root "src\loader\$($target.loader)\resources") $classes $tokens
   Write-Host "classes + resources staged in $classes"
 
   $jarName = "$modId-$version$($target.suffix).jar"
@@ -175,7 +283,7 @@ function Build-SourcesJar {
   if (Test-Path $srcStage) { Remove-Item $srcStage -Recurse -Force }
   New-Item -ItemType Directory -Force -Path $srcStage | Out-Null
   Copy-Item (Join-Path $root 'src\main\java') -Destination $srcStage -Recurse -Force
-  foreach ($loader in @('forge', 'neoforge')) {
+  foreach ($loader in @('forge', 'fabric', 'neoforge')) {
     $dest = Join-Path $srcStage "loader\$loader"
     New-Item -ItemType Directory -Force -Path $dest | Out-Null
     Copy-Item (Join-Path $root "src\loader\$loader\java") -Destination $dest -Recurse -Force
@@ -184,6 +292,9 @@ function Build-SourcesJar {
   New-Item -ItemType Directory -Force -Path (Join-Path $srcStage 'resources') | Out-Null
   Copy-Item (Join-Path $root 'src\main\resources\META-INF') -Destination (Join-Path $srcStage 'resources') -Recurse -Force
   Copy-Item (Join-Path $root 'src\main\resources\watermedia_android_bridge.mixins.json') -Destination (Join-Path $srcStage 'resources') -Force
+  # the Fabric target needs this compile-only intermediary stub to build at all
+  New-Item -ItemType Directory -Force -Path (Join-Path $srcStage 'tools') | Out-Null
+  Copy-Item (Join-Path $root 'tools\fabric-stubs') -Destination (Join-Path $srcStage 'tools') -Recurse -Force
   Copy-Item (Join-Path $root 'LICENSE') -Destination $srcStage -Force
   & $jarExe --create --file $sourceJar -C $srcStage .
   if ($LASTEXITCODE -ne 0) { throw 'source jar creation failed' }
@@ -191,7 +302,7 @@ function Build-SourcesJar {
   Write-Host "built $sourceJar"
 }
 
-$selected = if ($Target -eq 'all') { @('forge1201', 'neoforge1211') } else { @($Target) }
+$selected = if ($Target -eq 'all') { @('forge1201', 'fabric1201', 'fabric1211', 'neoforge1211') } else { @($Target) }
 $built = @()
 foreach ($name in $selected) { $built += (Build-Target $name) }
 Build-SourcesJar

@@ -11,17 +11,19 @@ A patch mod that makes WATERMeDIA / WATERFrAMES work on Android by bundling VLC 
 | Item | Requirement |
 |---|---|
 | Minecraft | **1.20.1** or **1.21.1** (client) |
-| Loader | **Forge 47.x (1.20.1)** or **NeoForge 21.1.235+ (1.21.1)** |
+| Loader | **Forge 47.x**, **Fabric (loader 0.19.5+, needs Fabric API)** or **NeoForge 21.1.235+** |
 | Required dependency | WATERMeDIA **2.1.36 / 2.1.37** |
 | Launchers | Android Java Edition launchers such as PojavLauncher and FCL |
 | Architecture | arm64-v8a / armeabi-v7a / x86_64 (no 32-bit x86) |
 
-**Pick the attachment that matches your setup** (both jars are functionally identical, only the loader
+**Pick the attachment that matches your setup** (all three jars are functionally identical, only the loader
 differs):
 
 | Your setup | Jar to use |
 |---|---|
 | 1.20.1 + Forge 47.x | `watermedia_android_bridge-1.0.5+mc1.20.1-forge.jar` |
+| 1.20.1 + Fabric (loader 0.19.5+, needs Fabric API) | `watermedia_android_bridge-1.0.5+mc1.20.1-fabric.jar` |
+| 1.21.1 + Fabric (loader 0.19.5+, needs Fabric API) | `watermedia_android_bridge-1.0.5+mc1.21.1-fabric.jar` |
 | 1.21.1 + NeoForge 21.1.x | `watermedia_android_bridge-1.0.5+mc1.21.1-neoforge.jar` |
 
 > Not for WATERMeDIA 3.x (FFmpeg backend, without the VLC discovery hook this mod relies on).
@@ -45,30 +47,42 @@ music recover automatically.
 
 ## Changes in 1.0.5
 
-### Added: Minecraft 1.20.1 / Forge 47.x support
+### Added: Minecraft 1.20.1 support for Forge and Fabric
 
-The same patch now ships as two loader builds (`+mc1.20.1-forge` and `+mc1.21.1-neoforge`) — **pick the
-one matching your setup**. The 1.20.1 build is not a rewrite; only the loader layer changes:
+The same patch now ships as four builds (`+mc1.20.1-forge`, `+mc1.20.1-fabric`, `+mc1.21.1-fabric` and
+`+mc1.21.1-neoforge`) — **pick the one matching your setup**. The 1.20.1 builds are not rewrites;
+only the loader layer changes:
 
 * **All functional sources are shared**: bundled VLC, app-internal extraction, the `JNI_OnLoad` preload,
   the `android.os.Environment` stub, the LWJGL aligned-allocation fallback, the GL ES safe video upload
   and the video chain logging only talk to WATERMeDIA + LWJGL + VLC, so they are byte-identical across
   both builds (12 files);
 * **Only the entry point and metadata differ**: Forge uses `@Mod` plus `TickEvent.ClientTickEvent`
-  (`Dist.CLIENT`), ships `META-INF/mods.toml` with `pack_format 15`, and registers its mixin config
-  through the **jar manifest `MixinConfigs`** (Forge's `mods.toml` has no `[[mixins]]`).  NeoForge is
-  unchanged (`neoforge.mods.toml` + `[[mixins]]` + `pack_format 34`);
+  (`Dist.CLIENT`) with `META-INF/mods.toml` + `pack_format 15` and registers its mixin config through
+  the **jar manifest `MixinConfigs`**; Fabric uses `fabric.mod.json` with the **`preLaunch` and `client`
+  entrypoints**, a `mixins` list and `pack_format 15`; NeoForge is unchanged (`neoforge.mods.toml` +
+  `[[mixins]]` + `pack_format 34`);
 * **The WATERMeDIA dependency is unchanged** (`[2.1.36,3.0.0)`): WATERMeDIA 2.1.37 is published for
   1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21.1 / 1.21.5 on fabric / forge / neoforge, contains
   `ForgeLoader`, `NeoFLoader` and `FabricLoader`, and has **zero `net/minecraft/` references** in its
   967 classes — so both builds use the very same prerequisite jar;
-* **More robust game directory detection**: previously only NeoForge's `FMLLoader.getGamePath()` was
-  asked; now `net.neoforged`/`net.minecraftforge` `FMLLoader.getGamePath()` and `FMLPaths.GAMEDIR.get()`
-  are tried in turn, with a warning (and
-  `-Dwatermedia.androidbridge.gameDir=<path>`) only when everything fails.
+* **Why Fabric needs `preLaunch`**: Fabric has no load-order attribute and WATERMeDIA is a dependency,
+  so it initialises **first**; videolan4j's `NativeDiscovery.start()` is **one-shot** (after its first
+  failed attempt an internal `attempted` flag makes every later call return `false`).  The payload
+  therefore has to be in place before WATERMeDIA initialises.
+* **More robust game directory detection**: Fabric's `FabricLoader.getGameDir()`, NeoForge's and
+  Forge's `FMLLoader.getGamePath()` and `FMLPaths.GAMEDIR.get()` are tried in turn, with a warning
+  (and `-Dwatermedia.androidbridge.gameDir=<path>`) only when everything fails.
 
-Both jars contain the **same functional code byte for byte**; only the loader entry point and metadata
-differ. The bundled VLC and the payload version (`vlc3.0.23-android3.7.1-r2`) are unchanged, so upgrading
+All four jars contain the **same functional code byte for byte**; only the loader entry point and
+metadata differ.
+
+**Fabric notes**: it additionally requires Fabric API, its WATERMeDIA range is widened to **2.1.24 -
+2.1.37** (Forge/NeoForge stay on 2.1.36+), and it is compiled against 2.1.24 - the oldest supported version -
+so an API that only exists in the newer generation cannot slip in.  WATERMeDIA 2.1.24 - 2.1.35 allocate with
+`MemoryAllocator.malloc()` and throw `OutOfMemoryError` when it returns NULL (the "mod loading has failed"
+crash fixed back in 1.0.3), so the bridge now covers that allocator generation too; the video upload injection
+point has an identical descriptor in both generations. The bundled VLC and the payload version (`vlc3.0.23-android3.7.1-r2`) are unchanged, so upgrading
 within this version does not re-extract anything.
 
 ### Fixed: white video screen (audio fine, picture frozen on the first frame)

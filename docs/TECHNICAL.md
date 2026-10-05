@@ -530,7 +530,7 @@ harness 因此专门核对这个字符串。
 mixin 配置列出两个混入、`VideoUpload.class` 里确实是 `GL_UNSIGNED_BYTE` + 两步回退、
 以及**在没有 GL 上下文时调用 `VideoUpload.upload` 不抛异常**（正是信号量保护契约）。
 
-## 13. 多 loader 移植：1.20.1 / Forge 47.x（1.0.5）
+## 13. 多 loader 移植：1.20.1（Forge / Fabric）与 1.21.1（NeoForge）（1.0.5）
 
 ### 13.1 为什么这不是重写
 
@@ -543,7 +543,7 @@ mixin 配置列出两个混入、`VideoUpload.class` 里确实是 `GL_UNSIGNED_B
 | LWJGL 对齐分配兜底、GLES 安全上传、视频埋点 | `MemoryUtil` / `GL11` / `VideoPlayer` | 无关（LWJGL 3.3.x 两版都有这些符号） |
 | 注册 VLC 工厂（`--aout` / `--vout` / `--avcodec-hw`） | `PlayerAPI.registerFactory` | 无关 |
 
-因此 **12 个功能源文件在 Forge 与 NeoForge 两个构建里逐字节相同**（`src/main/java`），
+因此 **13 个功能源文件在三个构建里逐字节相同**（`src/main/java`），
 差异被压缩到两处：入口类与 loader 元数据。
 
 ### 13.2 上游证据：WATERMeDIA 2.1.37 是同一份 jar
@@ -591,13 +591,102 @@ Forge 的 `MixinConfigs` 清单项、NeoForge 的 `[[mixins]]`，以及依赖语
 离线无法验证的部分只有一件：真正的 Forge 启动（需要一台装了 Forge 47.4.10 的实例）。
 因此这次移植的真机复测重点是"1.20.1 上能否加载并把 VLC 接上"，判定方式仍是 §12.4 的三行日志。
 
-### 13.5 游戏目录探测（两个 loader 统一）
+### 13.5 游戏目录探测（三个 loader 统一）
 
-`AndroidVlc.resolveGameDir()` 现在按顺序尝试：系统属性覆盖 →
+`AndroidVlc.resolveGameDir()` 现在按顺序尝试：系统属性覆盖 → Fabric 的 `FabricLoader.getInstance().getGameDir()` →
 `net.neoforged.fml.loading.FMLLoader.getGamePath()` → `net.minecraftforge.fml.loading.FMLLoader.getGamePath()`
 → `net.neoforged.fml.loading.FMLPaths.GAMEDIR.get()` → `net.minecraftforge.fml.loading.FMLPaths.GAMEDIR.get()`
 → 工作目录（并打印告警，提示用 `-Dwatermedia.androidbridge.gameDir=<路径>` 指定）。
 两边都是反射调用，因此这个类在纯 JVM harness 里也能加载。
+
+### 13.6 Fabric：为什么必须用 `preLaunch`，以及中介名桩
+
+Fabric **没有加载顺序声明**，而 WATERMeDIA 是本模组的依赖 → Fabric 按依赖顺序初始化，WATERMeDIA
+会**先**跑。这在别处只是"晚一点生效"，在这里却是**致命**的，因为 videolan4j 的发现是一次性的：
+
+```java
+// 反编译自 videolan4j NativeDiscovery
+public static synchronized boolean start() {
+    if (discovered) return true;
+    else if (attempted) return false;   // ← 一旦试过，后续调用不会再试
+    ...
+    attempted = true;                   // ← 找不到/失败时置位
+}
+```
+
+所以第一次（WATERMeDIA 启动时）载荷必须已经就位，否则 Fabric 上 VLC 永远加载不上——这也解释了为什么
+现有的 tick 兜底只对"重注册参数"有效，对"重新发现"无效。Fabric 的解法是 **`PreLaunchEntrypoint`**：
+它在所有模组的 `main`/`client` 初始化器之前、游戏启动之前运行，正好用来 `bootstrapEarly()`。
+
+| Fabric 关注点 | 做法 |
+|---|---|
+| 入口点 | `fabric.mod.json` 里 `preLaunch`（装载荷）+ `client`（tick 兜底，`ClientTickEvents.END_CLIENT_TICK`）指向同一个类；`AndroidVlc.bootstrapEarly()` 幂等，调用两次无副作用 |
+| mixin 注册 | `fabric.mod.json` 的 `"mixins": [...]`（Fabric 不看 jar 清单的 `MixinConfigs`） |
+| 元数据 | `pack.mcmeta` 用 `pack_format 15`；`depends` 声明 `fabricloader / fabric-api / minecraft ~1.20.1 / java >=17 / watermedia >=2.1.24 <2.1.38` |
+| 编译期中介名 | Fabric 运行时把游戏映射成 intermediary，`ClientTickEvents.EndTick` 的参数类型叫 `net.minecraft.class_310`。本机没有 Loom 生成的 intermediary MC jar，于是加了 `tools/fabric-stubs/net/minecraft/class_310.java`（空类），只编进 `build/stubs/<target>` 并挂上 classpath，**不会**进 jar |
+| Fabric API 的模块 | 发行包把模块藏在 `META-INF/jars/`（javac 看不见），`tools/download-deps.ps1` 解出 53 个嵌套模块到 `vendor/downloads/fabric-api-modules/`，构建时用通配符整体挂上 |
+| tick 兜底 | 在 `client` 入口点注册；`try/catch` 保护，API 缺失时只告警、不影响其它功能 |
+
+harness 对 Fabric 目标的核对（`checks = 64 / 65`）：`fabric.mod.json` 的 `environment`、
+`preLaunch`/`client` 入口点、`mixins` 字段、依赖声明，以及入口类**只**引用 Fabric 类型
+（不得出现 `net/neoforged`、`net/minecraftforge` 的 `@Mod`）。
+
+### 13.7 Fabric 目标的前置下界：WATERMeDIA 2.1.24
+
+Fabric 版把依赖放宽到 **2.1.24 – 2.1.37**（Forge / NeoForge 保持 2.1.36+）。这不是随手填的区间，
+而是逐项核对过的：
+
+| 检查项 | 2.1.24 | 结论 |
+|---|---|---|
+| `fabric.mod.json`（Fabric 模组身份） | 有（version 2.1.24，entrypoint `FavricLoader`） | ✓ 同一个 jar 就是 Fabric 模组 |
+| `RenderAPI.uploadBuffer(ByteBuffer;IIIIZ)V` | 描述符与 2.1.36 逐字相同 | ✓ 白屏修复的注入点有效 |
+| `VideoPlayer.display(MediaPlayer;[Ljava/nio/ByteBuffer;BufferFormat)V`、`<init>(MediaPlayerFactory;Executor)V` | 逐字相同 | ✓ 视频链路埋点有效 |
+| videolan4j 遮罩包名 | 同为 `org.watermedia.videolan4j`（487 个 class） | ✓ |
+| 发现链（`IProvider`、`PlayerAPI$ConfigProvider`、`NativeDiscovery.start()`、`registerFactory`、`WaterMedia.asResource`） | 全部存在 | ✓ 载荷挂接方式不变 |
+| **原生分配** | **只有 `createByteBuffer(int)`，走 `MemoryUtil.getAllocator(false).malloc(size)`，返回 0 就抛 `OutOfMemoryError`** | ✗ 需要新的兜底 |
+
+最后一行是关键差异：2.1.36+ 的分配在 `createByteBuffer(int,int)` 里调用 `MemoryUtil.memAlignedAlloc`，
+而 2.1.24 – 2.1.35 直接 `malloc` 并在失败时抛 `OutOfMemoryError`（正是 1.0.3 修掉的
+“mod loading has failed”形态）。所以 `RenderAPIMixin` 现在有两条注入：
+
+1. `@Redirect` 在 `createByteBuffer(II)` 的 `memAlignedAlloc` 调用点（2.1.36+：失败时退回 direct buffer，成功则保留对齐）；
+2. `@Inject(HEAD, cancellable)` 在 `createByteBuffer(I)`，**运行时先判断 2 参重载是否存在**，存在就直接放行
+   （不干扰新版本的对齐路径），不存在才按老逻辑 `malloc`、返回 0 时退回 `ByteBuffer.allocateDirect`。
+
+验证是两级证据：
+
+* **编译期**：Fabric target 的 classpath 指向 `vendor/downloads/watermedia-2.1.24.jar` —— 任何只在 2.1.36+
+  才有的 API 都会直接编译失败；
+* **运行期**：`tools/itest.ps1` 额外跑一轮 `mode=install (fabric classes with WATERMeDIA 2.1.24)`，
+  用最老版本把桥接自身的代码路径（配置、载荷、发现钩子、`ConfigProvider`）走一遍。
+
+两轮都通过后才写下 `">=2.1.24 <2.1.38"`。
+
+### 13.8 同一个 loader 的两个 Minecraft 版本（1.20.1 / 1.21.1 Fabric）
+
+Fabric 版现在同时提供给 1.20.1 与 1.21.1。**入口类与 mixin 完全复用**（它们不碰 Minecraft 类），
+差异只有两处：`fabric.mod.json` 的 `minecraft` 依赖与 `pack.mcmeta` 的 `pack_format`（1.20.1 = 15，1.21.1 = 34）。
+因此资源文件里写占位符，由构建脚本按目标展开：
+
+```
+fabric.mod.json   "version": "${modVersion}",  "minecraft": "~${mcVersion}"
+pack.mcmeta       "pack_format": ${packFormat}
+```
+
+（`tools/../build.ps1` 里的 `Copy-Resources` 只对文本资源展开 `${...}`，二进制载荷原样复制；若展开后仍残留占位符会直接构建失败。）
+编译桩 `net.minecraft.class_310` 两个版本都能用 —— intermediary 名对已有类是稳定的（已用 `intermediary-1.21.1.jar`
+的 `mappings.tiny` 核对），而且 Fabric API 的 `ClientTickEvents.EndTick.onEndTick` 在 1.21.1 里参数类型仍是 `class_310`。
+
+四个目标的校验（`tools/itest.ps1`，共 10 轮）：
+
+| 轮次 | 结果 |
+|---|---|
+| forge1201 编译产物 / 打包 jar | 61 / 62，0 失败 |
+| fabric1201 编译产物 / 打包 jar | 64 / 65，0 失败 |
+| fabric1211 编译产物 / 打包 jar | 64 / 65，0 失败 |
+| neoforge1211 编译产物 / 打包 jar | 62 / 63，0 失败 |
+| 真实发现链（discover） | 8，0 失败 |
+| fabric 编译产物 + WATERMeDIA 2.1.24（运行期下界） | 64，0 失败 |
 
 ## 14. 真机复测记录：视频修复生效 + 一个会「点名」本模组的第三方 JPMS 冲突
 

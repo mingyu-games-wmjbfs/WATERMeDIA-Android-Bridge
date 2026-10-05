@@ -10,7 +10,7 @@ Android 上让 WATERMeDIA / WATERFrAMES 能用的补丁模组（内置 VLC for A
 | 项目 | 要求 |
 |---|---|
 | Minecraft | **1.20.1** 或 **1.21.1**（客户端） |
-| 加载器 | **Forge 47.x（1.20.1）** 或 **NeoForge 21.1.235+（1.21.1）** |
+| 加载器 | **Forge 47.x**、**Fabric**（loader 0.19.5+）或 **NeoForge 21.1.235+** |
 | 必需前置 | WATERMeDIA **2.1.36 / 2.1.37** |
 | 启动器 | PojavLauncher、FCL 等安卓 Java 版启动器 |
 | 设备 | arm64-v8a / armeabi-v7a / x86_64（不含 32 位 x86） |
@@ -20,6 +20,8 @@ Android 上让 WATERMeDIA / WATERFrAMES 能用的补丁模组（内置 VLC for A
 | 你的环境 | 用哪个 jar |
 |---|---|
 | 1.20.1 + Forge 47.x | `watermedia_android_bridge-1.0.5+mc1.20.1-forge.jar` |
+| 1.20.1 + Fabric（loader 0.19.5+，需 Fabric API） | `watermedia_android_bridge-1.0.5+mc1.20.1-fabric.jar` |
+| 1.21.1 + Fabric（loader 0.19.5+，需 Fabric API） | `watermedia_android_bridge-1.0.5+mc1.21.1-fabric.jar` |
 | 1.21.1 + NeoForge 21.1.x | `watermedia_android_bridge-1.0.5+mc1.21.1-neoforge.jar` |
 
 > 不适用于 WATERMeDIA 3.x（FFmpeg 后端，没有本模组依赖的 VLC 发现钩子）。
@@ -41,28 +43,42 @@ Android 上让 WATERMeDIA / WATERFrAMES 能用的补丁模组（内置 VLC for A
 
 ## 本版本变更（1.0.5）
 
-### 新增：Minecraft 1.20.1 / Forge 47.x 支持
+### 新增：Minecraft 1.20.1 的 Forge 与 Fabric 支持
 
-同一套补丁现在有两个 loader 版本（`+mc1.20.1-forge` 与 `+mc1.21.1-neoforge`），**按你的环境择一**。
-1.20.1 版不是重写，而是把 loader 相关的那一层换掉：
+同一套补丁现在有四个版本（`+mc1.20.1-forge`、`+mc1.20.1-fabric`、`+mc1.21.1-fabric`、`+mc1.21.1-neoforge`），
+**按你的环境择一**。1.20.1 版不是重写，而是把 loader 相关的那一层换掉：
 
 * **共用全部功能源码**：内置 VLC、内部存储解包、`JNI_OnLoad` 预加载、`android.os.Environment`
   桩类、LWJGL 对齐分配兜底、GLES 安全的视频上传、视频链路埋点——这些只与 WATERMeDIA + LWJGL +
-  VLC 打交道，与 MC/loader 版本无关，因此 12 个功能源文件两边**完全一致**；
-* **只有入口与元数据不同**：Forge 用 `@Mod` + `TickEvent.ClientTickEvent`（`Dist.CLIENT`），
-  元数据是 `META-INF/mods.toml` + `pack_format 15`，mixin 通过 **jar 清单的 `MixinConfigs`** 注册
-  （Forge 的 `mods.toml` 没有 `[[mixins]]`）；NeoForge 保持原样（`neoforge.mods.toml` +
-  `[[mixins]]` + `pack_format 34`）；
+  VLC 打交道，与 MC/loader 版本无关，因此 13 个功能源文件**逐字节相同**；
+* **只有入口与元数据不同**：Forge 用 `@Mod` + `TickEvent.ClientTickEvent`（`Dist.CLIENT`）+ `mods.toml`
+  （`pack_format 15`、mixin 走 **jar 清单的 `MixinConfigs`**）；Fabric 用 `fabric.mod.json`
+  （`preLaunch` + `client` 两个入口点、`mixins` 字段、`pack_format 15`，需 Fabric API）；
+  NeoForge 保持原样（`neoforge.mods.toml` + `[[mixins]]` + `pack_format 34`）；
+* **Fabric 为什么必须用 `preLaunch`**：Fabric 没有加载顺序声明，而 WATERMeDIA 是本模组的依赖 →
+  它会**先**初始化；videolan4j 的 `NativeDiscovery.start()` 是**一次性**的（第一次失败后
+  内部 `attempted` 标志会让后续调用直接返回 `false`，永不重试）。所以载荷必须在 WATERMeDIA
+  初始化之前（`preLaunch`）就位，否则 Fabric 上 VLC 永远加载不上；
 * **WATERMeDIA 依赖不变**：仍是 `[2.1.36,3.0.0)`。WATERMeDIA 2.1.37 的同一个 jar 同时面向
-  1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21.1 / 1.21.5 与 fabric / forge / neoforge 发布，
-  内含 `ForgeLoader`、`NeoFLoader`、`FabricLoader` 三种实现，且 967 个 class 里**零个
-  `net/minecraft/` 引用**——所以两个 loader 版本用的是同一个前置；
-* **游戏目录探测更稳**：以前只问 NeoForge 的 `FMLLoader.getGamePath()`，现在依次尝试
-  `net.neoforged`/`net.minecraftforge` 的 `FMLLoader.getGamePath()` 与 `FMLPaths.GAMEDIR.get()`，
-  都失败才退回工作目录并打印告警（`-Dwatermedia.androidbridge.gameDir=<路径>` 可强制指定）。
+  1.16.5 / 1.18.2 / 1.19.2 / 1.20.1 / 1.21.1 / 1.21.5 与 fabric / forge / neoforge 发布
+  （自带 `fabric.mod.json`、`mods.toml`、`neoforge.mods.toml`），内含 `ForgeLoader`、`NeoFLoader`、
+  `FabricLoader` 三种实现，且 967 个 class 里**零个 `net/minecraft/` 引用**——所以三个 loader 版本
+  用的是同一个前置；
+* **游戏目录探测更稳**：依次尝试 Fabric 的 `FabricLoader.getGameDir()`、NeoForge/Forge 的
+  `FMLLoader.getGamePath()` 与 `FMLPaths.GAMEDIR.get()`，都失败才退回工作目录并打印告警
+  （`-Dwatermedia.androidbridge.gameDir=<路径>` 可强制指定）。
 
-两个 jar 的功能代码**逐字节相同**，区别只在 loader 入口与元数据。
+四个 jar 的功能代码**逐字节相同**，区别只在 loader 入口与元数据。
 内置 VLC 与 payload 版本（`vlc3.0.23-android3.7.1-r2`）不变，同一版本号内升级**不会重新解包**。
+
+**Fabric 版特别说明**（1.20.1 与 1.21.1 各一份，功能代码相同）：
+
+* 额外要求 Fabric API（`fabric-api`）；两个版本用同一份 `fabric.mod.json` 模板，只差 `minecraft` 依赖与 `pack_format`（15 / 34）；
+* **前置 WATERMeDIA 放宽到 2.1.24 – 2.1.37**（Forge / NeoForge 仍是 2.1.36 / 2.1.37）。2.1.24 – 2.1.35
+  的原生分配走的是 `MemoryAllocator.malloc()` + 失败即抛 `OutOfMemoryError`（正是 1.0.3 修过的"模组加载失败"形态），
+  桥接为此补了一条只在老版本生效的分配兜底：先按原逻辑 malloc，返回 NULL 才退回 direct buffer；
+  视频上传的注入点（`uploadBuffer`）在两代里描述符完全一致，白屏修复同样有效。
+* Fabric 版**用 2.1.24（最老受支持版本）编译**，确保不会误用新版本才有的 API。
 
 ### 修复：视频白屏（音频正常、画面停在第一帧）
 

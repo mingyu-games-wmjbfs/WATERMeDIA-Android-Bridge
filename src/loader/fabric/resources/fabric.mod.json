@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "watermedia_android_bridge",
+  "version": "${modVersion}",
+  "name": "WATERMeDIA: Android Bridge",
+  "description": "Android patch for WATERMeDIA: bundles libVLC built for Android and wires it into WATERMeDIA's native discovery, so WATERFrAMES video screens and WATERMeDIA audio work on PojavLauncher and other Android Java Edition launchers where no system VLC exists. Minecraft ${mcVersion} / Fabric, client only.",
+  "authors": [
+    "WATERMeDIA Android Bridge contributors"
+  ],
+  "contact": {
+    "sources": "https://github.com/mingyu-games-wmjbfs/WATERMeDIA-Android-Bridge",
+    "issues": "https://github.com/mingyu-games-wmjbfs/WATERMeDIA-Android-Bridge/issues"
+  },
+  "license": "GPL-3.0-or-later",
+  "environment": "client",
+  "entrypoints": {
+    "preLaunch": [
+      "org.watermedia.androidbridge.AndroidBridge"
+    ],
+    "client": [
+      "org.watermedia.androidbridge.AndroidBridge"
+    ]
+  },
+  "mixins": [
+    "watermedia_android_bridge.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=0.14.0",
+    "fabric-api": "*",
+    "minecraft": "~${mcVersion}",
+    "java": ">=17",
+    "watermedia": ">=2.1.24 <2.1.38"
+  }
+}

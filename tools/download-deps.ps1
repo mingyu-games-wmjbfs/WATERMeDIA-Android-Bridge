@@ -66,5 +66,49 @@ Get-File "$forgeBase/forge/$forgeMc-$forgeVersion/forge-$forgeMc-$forgeVersion-u
 Get-File "$forgeBase/javafmllanguage/$forgeMc-$forgeVersion/javafmllanguage-$forgeMc-$forgeVersion.jar" "$dl\javafmllanguage-$forgeMc-$forgeVersion.jar" | Out-Null
 Get-File "$forgeBase/mergetool/1.1.5/mergetool-1.1.5-api.jar" "$dl\mergetool-1.1.5-api.jar" | Out-Null
 
+Write-Host "===== Fabric compile dependencies (1.20.1 + 1.21.1) ====="
+# The Fabric targets need fabric-loader (the entrypoint interfaces) and the Fabric API module
+# jars.  The Fabric API distribution hides every module inside META-INF/jars/, which javac
+# cannot read, so each bundle is unpacked next to it; the build script then puts that whole
+# directory on the classpath of the matching target.
+Get-File 'https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.19.5/fabric-loader-0.19.5.jar' "$dl\fabric-loader-0.19.5.jar" | Out-Null
+# both Fabric targets are compiled against the OLDEST supported WATERMeDIA, so the 2.1.24 jar is a
+# build dependency as well (tools/itest.ps1 additionally runs a runtime pass with it)
+Get-File 'https://cdn.modrinth.com/data/G922NeHS/versions/HlUiSWvC/watermedia-2.1.24.jar' "$dl\watermedia-2.1.24.jar" | Out-Null
+
+function Expand-FabricApi([string]$bundlePattern, [string]$url, [string]$targetDirectory) {
+  $bundle = Get-ChildItem $dl -Filter $bundlePattern -ErrorAction SilentlyContinue | Select-Object -First 1
+  if (-not $bundle) {
+    Get-File $url (Join-Path $dl (Split-Path $url -Leaf).Replace('%2B', '+')) | Out-Null
+    $bundle = Get-ChildItem $dl -Filter $bundlePattern -ErrorAction SilentlyContinue | Select-Object -First 1
+  }
+  if (-not $bundle -or $bundle.Length -lt 100000) {
+    Write-Host "[WARN] no $bundlePattern bundle - extract META-INF/jars/*.jar from any Fabric API jar into $targetDirectory"
+    return
+  }
+  New-Item -ItemType Directory -Force -Path $targetDirectory | Out-Null
+  try {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($bundle.FullName)
+    $count = 0
+    foreach ($entry in $zip.Entries | Where-Object { $_.FullName -match '^META-INF/jars/.*\.jar$' }) {
+      [System.IO.Compression.ZipFileExtensions]::ExtractToFile(
+        $entry, (Join-Path $targetDirectory (Split-Path $entry.FullName -Leaf)), $true)
+      $count++
+    }
+    $zip.Dispose()
+    Write-Host "[ok  ] unpacked $count Fabric API modules from $($bundle.Name) into $targetDirectory"
+  } catch {
+    Write-Host "[FAIL] could not unpack the Fabric API modules: $_"
+  }
+}
+
+Expand-FabricApi 'fabric-api-0.92*.jar' `
+  'https://cdn.modrinth.com/data/P7dR8mSH/versions/8mQd2f4F/fabric-api-0.92.12%2B1.20.1.jar' `
+  (Join-Path $dl 'fabric-api-modules')
+Expand-FabricApi 'fabric-api-0.11*.jar' `
+  'https://cdn.modrinth.com/data/P7dR8mSH/versions/Mys3P7lK/fabric-api-0.116.17%2B1.21.1.jar' `
+  (Join-Path $dl 'fabric-api-modules-1.21.1')
+
 Write-Host "===== DONE ====="
 Get-ChildItem $dl | Select-Object Name, Length | Format-Table -AutoSize

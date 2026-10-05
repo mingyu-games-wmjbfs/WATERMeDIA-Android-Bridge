@@ -3,6 +3,7 @@
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Minecraft](https://img.shields.io/badge/Minecraft-1.20.1%20%7C%201.21.1-3fb950.svg)](#requirements)
 [![Forge](https://img.shields.io/badge/Forge-47.x-e8942a.svg)](#requirements)
+[![Fabric](https://img.shields.io/badge/Fabric-0.19.5-dbb69c.svg)](#requirements)
 [![NeoForge](https://img.shields.io/badge/NeoForge-21.1.235%2B-e8942a.svg)](#requirements)
 [![WATERMeDIA](https://img.shields.io/badge/WATERMeDIA-2.1.36%20~%202.1.37-8b5cf6.svg)](#requirements)
 [![Version](https://img.shields.io/badge/version-1.0.5-lightgrey.svg)](https://github.com/mingyu-games-wmjbfs/WATERMeDIA-Android-Bridge/releases)
@@ -45,8 +46,8 @@ discovery chain.
 | Item | Requirement |
 |---|---|
 | Minecraft | **1.20.1** or **1.21.1** (client) |
-| Mod loader | **Forge 47.x** (with MC 1.20.1) or **NeoForge 21.1.235+** (with MC 1.21.1) |
-| Required dependency | **WATERMeDIA 2.1.36 or 2.1.37** (the VLC / videolan4j generation) |
+| Mod loader | **Forge 47.x**, **Fabric (loader 0.19.5+, needs Fabric API)** or **NeoForge 21.1.235+**; the Fabric build ships for both 1.20.1 and 1.21.1 |
+| Required dependency | **WATERMeDIA 2.1.36 / 2.1.37** (Forge, NeoForge); **2.1.24 – 2.1.37** (Fabric, see below) — all the VLC / videolan4j generation |
 | Launchers | Android Java Edition launchers: PojavLauncher, FCL (Fold Craft Launcher) and forks |
 | Architecture | `arm64-v8a` (most devices), `armeabi-v7a` (32-bit JVM), `x86_64` (emulators); no `x86` |
 | Server | **Not needed** — client side only; VLC playback only happens on the client |
@@ -71,10 +72,12 @@ discovery chain.
    | Your setup | Download |
    |---|---|
    | MC **1.20.1** + Forge 47.x | `watermedia_android_bridge-1.0.5+mc1.20.1-forge.jar` |
+   | MC **1.20.1** + Fabric 0.19.5 | `watermedia_android_bridge-1.0.5+mc1.20.1-fabric.jar` (needs Fabric API; WATERMeDIA 2.1.24 – 2.1.37) |
+   | MC **1.21.1** + Fabric 0.19.5+ | `watermedia_android_bridge-1.0.5+mc1.21.1-fabric.jar` (needs Fabric API) |
    | MC **1.21.1** + NeoForge 21.1.x | `watermedia_android_bridge-1.0.5+mc1.21.1-neoforge.jar` |
 
-   Put it in the same `mods/` folder (**installing both is pointless, and the wrong one is rejected by the
-   loader with an unmet-dependency message**);
+   Put it in the same `mods/` folder (**installing several is pointless, and the wrong one is rejected by
+   the loader with an unmet-dependency message**);
 3. Start the game. On the **first launch** it extracts about 43 MiB per ABI of native libraries into
    **app-internal storage** and prints the exact path to the log; later launches reuse it (a version marker
    prevents re-extraction);
@@ -136,7 +139,8 @@ useful.
 | `bilibili_media` fails with `NoClassDefFoundError: me/shedaniel/autoconfig/ConfigData` | That third-party mod is missing its **Cloth Config** dependency | Install Cloth Config or remove that mod |
 | Video but no sound | The device's `opensles` output is unusable | Change `audioOutput` to `audiotrack,opensles,any`, or simply `any` |
 | Sound works but the picture stays a plain white quad (video never moves) | Up to 1.0.4: WATERMeDIA uploaded frames with the desktop-only `GL_UNSIGNED_INT_8_8_8_8_REV` type, OpenGL ES rejects it and the texture never receives data | Fixed in 1.0.5: the equivalent `GL_UNSIGNED_BYTE` type plus fallback paths, a forced `--vout=vmem` and MediaCodec hardware decoding off by default. If it is still white, the log says whether libvlc produced no frame (only `video player #N created`) or the problem is on the renderer side (`video texture upload works` present) |
-| On 1.20.1 Forge the loader reports a missing dependency / the mod does not load | The wrong jar for that loader was installed | MC 1.20.1 + Forge 47.x needs `+mc1.20.1-forge`, MC 1.21.1 + NeoForge needs `+mc1.21.1-neoforge`; putting both in `mods/` serves no purpose |
+| On 1.20.1 Forge the loader reports a missing dependency / the mod does not load | The wrong jar for that loader was installed | MC 1.20.1 + Forge 47.x needs `+mc1.20.1-forge`, MC 1.20.1 + Fabric needs `+mc1.20.1-fabric`, MC 1.21.1 + NeoForge needs `+mc1.21.1-neoforge`; installing several serves no purpose |
+| Fabric reports a missing `fabric-api`, or video still does not work | The Fabric build depends on **Fabric API** and extracts the payload in the `preLaunch` entrypoint, before WATERMeDIA initialises | Install Fabric API 0.92.x; if VLC still is not found, check the log for `WATERMeDIA: Android Bridge … using /data/user/0/…` and `Successfully loaded VLC` |
 | Instant crash: `Error while resolving modules` + `ResolutionException: Modules rinku and mcef export package org.cef.misc to module watermedia_android_bridge` | **Unrelated to this mod**: the MCEF and Rinku jars are both explicit JPMS modules carrying a `module-info` and both export `org.cef.misc`, so Java's module resolution fails outright. The third module named in that message (here: this mod) is only the *reader*, not the culprit | Keep a single copy of Rinku in `mods/` (MCEF ships an embedded `de.keksuccino.rinku-…-mod.jar`; delete the standalone one) or remove MCEF. To verify: temporarily remove this mod's jar — the error only renames the reader module and the game still will not start |
 | First launch is slow | About 43 MiB of native libraries are being extracted | Expected, first launch only; later launches reuse the cached payload |
 
@@ -199,8 +203,10 @@ tools\pack-payload.ps1
 
 # 3) compile and package with javac + jar
 #    -Target forge1201 (default) = MC 1.20.1 / Forge 47.4.10
+#    -Target fabric1201         = MC 1.20.1 / Fabric (loader 0.19.5+, Fabric API 0.92.x)
+#    -Target fabric1211         = MC 1.21.1 / Fabric (loader 0.19.5+, Fabric API 0.116.x)
 #    -Target neoforge1211       = MC 1.21.1 / NeoForge 21.1.x
-#    -Target all                = both, plus the sources jar
+#    -Target all                = all four, plus the sources jar
 #    the build refuses to run if a source file is missing its SPDX licence header
 tools\build.ps1 -Target all
 
@@ -209,6 +215,12 @@ tools\build.ps1 -Target all
 tools\itest.ps1
 ```
 
+* The Fabric targets are deliberately compiled against the **oldest supported** WATERMeDIA
+  (`vendor/downloads/watermedia-2.1.24.jar`), so an API that only exists in 2.1.36+ fails at compile time; the
+  integration harness then runs the bridge against 2.1.24 as well.
+* The Fabric API bundles hide their modules inside `META-INF/jars/`, which javac cannot read, so
+  `tools/download-deps.ps1` unpacks them into `vendor/downloads/fabric-api-modules/` (1.20.1) and
+  `vendor/downloads/fabric-api-modules-1.21.1/` (1.21.1).
 * `tools/build.ps1` reads its compile-time dependencies (Forge / NeoForge / Mixin / JNA / Log4j) from the
   local PCL2 library folder; change `$mc` at the top of the script on another machine.  The three Forge
   47.4.10 jars (`forge-…-universal`, `javafmllanguage`, `mergetool`) are tiny and live in
@@ -229,12 +241,16 @@ From [Releases](https://github.com/mingyu-games-wmjbfs/WATERMeDIA-Android-Bridge
 
 | File | Size | SHA-256 |
 |---|---|---|
-| `watermedia_android_bridge-1.0.5+mc1.20.1-forge.jar` | 59.17 MiB | `CD2C63E9361DCFD9C8B9A222A44DC5B50F416E58246D2A2C2D7DD67A04D8080E` |
-| `watermedia_android_bridge-1.0.5+mc1.21.1-neoforge.jar` | 59.17 MiB | `F7EC428FE06F496DB456D6A035BAB45B80140E24482A4A308F12E2F704882362` |
+| `watermedia_android_bridge-1.0.5+mc1.20.1-forge.jar` | 59.17 MiB | `EBD3DED9EB421285A618A04FDC2958E86FFC599177E69465CF1DD8E815E7A9B8` |
+| `watermedia_android_bridge-1.0.5+mc1.20.1-fabric.jar` | 59.17 MiB | `8D5F9DB8D83CE79B248611FF7555F6C1A18BE0195E4606AC53B58AD4675AAEBD` |
+| `watermedia_android_bridge-1.0.5+mc1.21.1-fabric.jar` | 59.17 MiB | `CC3B5083AEB88A2A3027CCEEAA21D79B44EA0B295F5C6C785A9CEABBAA0FFFD7` |
+| `watermedia_android_bridge-1.0.5+mc1.21.1-neoforge.jar` | 59.17 MiB | `9C15DEC8BE6A35881CB6F02294337182CEA63C6D49F84E2B12B1ABE0E55C3516` |
 
-Both jars contain the same functional code; they only differ in the loader entry point and metadata
-(Forge: `mods.toml` + `pack_format 15` + `MixinConfigs` in the manifest; NeoForge:
-`neoforge.mods.toml` + `[[mixins]]` + `pack_format 34`).
+All four jars contain the same functional code; they only differ in the loader entry point and metadata
+(Forge: `mods.toml` + `pack_format 15` + `MixinConfigs` in the manifest; Fabric: `fabric.mod.json` with the
+`preLaunch` and `client` entrypoints plus a `mixins` list — one file per Minecraft version, differing only in
+the `minecraft` dependency and the pack format (15 / 34); NeoForge: `neoforge.mods.toml` + `[[mixins]]` +
+`pack_format 34`).
 
 The source lives in this repository (`src/`, `tools/`), so no separate source archive is published — see
 “Building from source” to package it yourself.

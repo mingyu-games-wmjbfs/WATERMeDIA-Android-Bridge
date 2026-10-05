@@ -8,6 +8,9 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+import org.lwjgl.system.MemoryUtil;
+import org.lwjgl.system.MemoryUtil.MemoryAllocator;
 import org.watermedia.androidbridge.BridgeLog;
 import org.watermedia.androidbridge.VideoUpload;
 import org.watermedia.api.render.RenderAPI;
@@ -47,6 +50,51 @@ import org.watermedia.api.render.RenderAPI;
  */
 @Mixin(value = RenderAPI.class, remap = false)
 public abstract class RenderAPIMixin {
+
+    /**
+     * WATERMeDIA 2.1.24 - 2.1.35 allocate through
+     * {@code MemoryUtil.getAllocator(false).malloc(size)} and throw an {@code OutOfMemoryError}
+     * when that returns {@code NULL} - the same "mod loading has failed" crash this bridge
+     * already fixed for the newer aligned allocation.  Those versions have no two argument
+     * {@code createByteBuffer}, so the redirect below never fires there; this injection takes
+     * over only in that case (checked at runtime, so 2.1.36+ behaviour is untouched and keeps
+     * its 32 byte alignment).
+     */
+    @Inject(
+            method = "createByteBuffer(I)Ljava/nio/ByteBuffer;",
+            at = @At(value = "HEAD"),
+            cancellable = true,
+            require = 0,
+            remap = false)
+    private static void bridge$legacyCreateByteBuffer(final int size, final CallbackInfoReturnable<ByteBuffer> cir) {
+        if (hasAlignedOverload()) return;   // 2.1.36+: handled by bridge$memAlignedAllocOrDirect
+        try {
+            final MemoryAllocator allocator = MemoryUtil.getAllocator(false);
+            final long address = allocator.malloc(size);
+            if (address != 0L) {
+                cir.setReturnValue(MemoryUtil.memByteBuffer(address, size));
+                return;
+            }
+            BridgeLog.warn("WATERMeDIA's native allocation of {} bytes returned NULL; falling back to a "
+                            + "plain direct buffer. If this repeats, the JVM has no native memory left: "
+                            + "lower -Xms/-Xmx for this instance and close other apps.", size);
+            cir.setReturnValue(ByteBuffer.allocateDirect(size));
+        } catch (final Throwable t) {
+            BridgeLog.warn("WATERMeDIA's native allocation of {} bytes failed ({}); falling back to a "
+                    + "plain direct buffer", size, t.toString());
+            cir.setReturnValue(ByteBuffer.allocateDirect(size));
+        }
+    }
+
+    /** True when the WATERMeDIA on the classpath has the aligned two argument allocator. */
+    private static boolean hasAlignedOverload() {
+        try {
+            RenderAPI.class.getMethod("createByteBuffer", int.class, int.class);
+            return true;
+        } catch (final Throwable t) {
+            return false;
+        }
+    }
 
     @Redirect(
             method = "createByteBuffer(II)Ljava/nio/ByteBuffer;",

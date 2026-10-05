@@ -1,0 +1,6 @@
+{
+  "pack": {
+    "description": "WATERMeDIA: Android Bridge (Minecraft ${mcVersion} / Fabric)",
+    "pack_format": ${packFormat}
+  }
+}

@@ -598,16 +598,28 @@ public final class AndroidVlc {
     /**
      * Resolves the Minecraft instance directory.  The loader is accessed reflectively so
      * that this class also loads in plain JVM harnesses, and every supported loader is
-     * tried in turn: NeoForge and Forge both ship
-     * {@code FMLLoader.getGamePath()}, while {@code FMLPaths.GAMEDIR.get()} is the older
-     * (and in some Forge versions the only) entry point.
+     * tried in turn: Fabric through {@code FabricLoader.getGameDir()}, NeoForge and Forge
+     * through {@code FMLLoader.getGamePath()}, while {@code FMLPaths.GAMEDIR.get()} is the
+     * older (and in some Forge versions the only) entry point.
      */
     private static Path resolveGameDir() {
         final String override = System.getProperty(AndroidEnv.PROP_GAME_DIR);
         if (override != null && !override.isEmpty()) {
             return Paths.get(override).toAbsolutePath().normalize();
         }
-        // NeoForge first (the loader this bridge grew up on), then Forge
+        // Fabric first (a single well known accessor), then NeoForge, then Forge
+        try {
+            final Class<?> fabric = Class.forName("net.fabricmc.loader.api.FabricLoader");
+            final Object instance = fabric.getMethod("getInstance").invoke(null);
+            final Object value = fabric.getMethod("getGameDir").invoke(instance);
+            if (value instanceof Path path) {
+                BridgeLog.debug("game directory from FabricLoader.getGameDir()");
+                return path.toAbsolutePath().normalize();
+            }
+        } catch (final Throwable t) {
+            BridgeLog.debug("FabricLoader.getGameDir() unavailable ({})", t.toString());
+        }
+        // NeoForge and Forge both ship FMLLoader.getGamePath()
         for (final String loaderName : new String[] {
                 "net.neoforged.fml.loading.FMLLoader",
                 "net.minecraftforge.fml.loading.FMLLoader"}) {

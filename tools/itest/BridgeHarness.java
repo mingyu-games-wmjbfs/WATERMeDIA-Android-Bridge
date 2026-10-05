@@ -131,8 +131,10 @@ public final class BridgeHarness {
                     "org/watermedia/api/render/RenderAPI.class");
             check("WATERMeDIA's RenderAPI bytecode declares createByteBuffer",
                     containsAscii(renderApi, "createByteBuffer"));
-            check("WATERMeDIA's RenderAPI bytecode calls MemoryUtil.memAlignedAlloc",
-                    containsAscii(renderApi, "org/lwjgl/system/MemoryUtil") && containsAscii(renderApi, "memAlignedAlloc"));
+            check("WATERMeDIA's RenderAPI allocates natively through LWJGL (either generation)",
+                    containsAscii(renderApi, "org/lwjgl/system/MemoryUtil")
+                            && (containsAscii(renderApi, "memAlignedAlloc")      // 2.1.36+
+                                    || containsAscii(renderApi, "getAllocator"))); // 2.1.24 - 2.1.35
 
             final byte[] mixinClass = readFromCodeSource(AndroidVlc.class,
                     "org/watermedia/androidbridge/mixin/RenderAPIMixin.class");
@@ -141,6 +143,13 @@ public final class BridgeHarness {
                     containsAscii(mixinClass, "org/lwjgl/system/MemoryUtil")
                             && containsAscii(mixinClass, "memAlignedAlloc")
                             && containsAscii(mixinClass, "createByteBuffer(II)Ljava/nio/ByteBuffer;"));
+            // WATERMeDIA 2.1.24-2.1.35 have no two argument createByteBuffer: they allocate with
+            // MemoryAllocator.malloc and throw OutOfMemoryError on NULL, so the bridge needs the
+            // single argument injection as well or those versions crash during mod loading.
+            check("the allocation mixin also covers the WATERMeDIA 2.1.24-2.1.35 allocator",
+                    containsAscii(mixinClass, "createByteBuffer(I)Ljava/nio/ByteBuffer;")
+                            && containsAscii(mixinClass, "getAllocator")
+                            && containsAscii(mixinClass, "memByteBuffer"));
 
             final byte[] mixinConfig = readFromCodeSource(AndroidVlc.class, "watermedia_android_bridge.mixins.json");
             check("the mixin config is packaged, non-required and lists RenderAPIMixin",
@@ -151,48 +160,69 @@ public final class BridgeHarness {
             check("mixin wiring could be inspected (" + t + ')', false);
         }
 
-        // ---- loader metadata: the same sources ship as a Forge and a NeoForge jar ----
+        // ---- loader metadata: the same sources ship as Fabric, Forge and NeoForge jars --
         // Only the entry point, the pack format and the mixin announcement differ; the
         // wrong combination silently produces a jar the loader refuses to start, so every
         // piece is checked against the metadata that is actually packaged.
         try {
             final byte[] forgeToml = readFromCodeSource(AndroidVlc.class, "META-INF/mods.toml");
             final byte[] neoForgeToml = readFromCodeSource(AndroidVlc.class, "META-INF/neoforge.mods.toml");
-            check("exactly one loader metadata file is packaged (mods.toml XOR neoforge.mods.toml)",
-                    (forgeToml == null) != (neoForgeToml == null));
-            final boolean forge = forgeToml != null;
-            System.out.println("  (loader metadata: " + (forge ? "META-INF/mods.toml (Forge)" : "META-INF/neoforge.mods.toml (NeoForge)") + ')');
+            final byte[] fabricJson = readFromCodeSource(AndroidVlc.class, "fabric.mod.json");
+            final int metadataFiles = (forgeToml == null ? 0 : 1) + (neoForgeToml == null ? 0 : 1)
+                    + (fabricJson == null ? 0 : 1);
+            check("exactly one loader metadata file is packaged (mods.toml XOR neoforge.mods.toml XOR fabric.mod.json)",
+                    metadataFiles == 1);
+            final String loader = forgeToml != null ? "forge" : neoForgeToml != null ? "neoforge" : "fabric";
+            final boolean modsTomlSyntax = "forge".equals(loader);
+            System.out.println("  (loader metadata: " + loader + ')');
 
-            final byte[] metadata = forge ? forgeToml : neoForgeToml;
+            final byte[] metadata = "forge".equals(loader) ? forgeToml
+                    : "neoforge".equals(loader) ? neoForgeToml : fabricJson;
             check("the metadata declares the mod id watermedia_android_bridge",
                     containsAscii(metadata, "watermedia_android_bridge"));
             check("the metadata declares GPL-3.0-or-later",
                     containsAscii(metadata, "GPL-3.0-or-later"));
-            check("the metadata requires WATERMeDIA >= 2.1.36 (VLC generation)",
-                    containsAscii(metadata, "2.1.36") && containsAscii(metadata, "watermedia"));
+            // The Fabric build supports the wider 2.1.24-2.1.37 range (its allocation paths are
+            // covered for both generations); Forge and NeoForge stay on 2.1.36+.
+            final boolean waterMediaRangeOk = "fabric".equals(loader)
+                    ? containsAscii(metadata, ">=2.1.24 <2.1.38")
+                    : containsAscii(metadata, "2.1.36");
+            check("the metadata requires a supported WATERMeDIA range ("
+                            + ("fabric".equals(loader) ? "2.1.24 - 2.1.37" : "2.1.36+") + ')',
+                    waterMediaRangeOk && containsAscii(metadata, "watermedia"));
 
             final byte[] packMeta = readFromCodeSource(AndroidVlc.class, "pack.mcmeta");
-            final boolean packFormatOk = forge
-                    ? containsAscii(packMeta, "\"pack_format\": 15")
-                    : containsAscii(packMeta, "\"pack_format\": 34");
+            // The pack format follows the declared Minecraft version, not the loader: the bridge
+            // now ships four jars (1.20.1 Forge/Fabric and 1.21.1 Fabric/NeoForge).
+            final boolean pack15 = containsAscii(metadata, "1.20.1");
             check("pack.mcmeta uses the pack format of its Minecraft version ("
-                    + (forge ? "1.20.1 = 15" : "1.21.1 = 34") + ')', packFormatOk);
+                    + (pack15 ? "1.20.1 = 15" : "1.21.1 = 34") + ')',
+                    pack15 ? containsAscii(packMeta, "\"pack_format\": 15")
+                            : containsAscii(packMeta, "\"pack_format\": 34"));
 
             final byte[] entry = readFromCodeSource(AndroidVlc.class,
                     "org/watermedia/androidbridge/AndroidBridge.class");
             check("the entry point class is packaged", entry != null);
-            check("the entry point belongs to this loader",
-                    forge ? (containsAscii(entry, "net/minecraftforge/fml/common/Mod")
-                                    && !containsAscii(entry, "net/neoforged/fml/common/Mod"))
-                            : (containsAscii(entry, "net/neoforged/fml/common/Mod")
-                                    && !containsAscii(entry, "net/minecraftforge/fml/common/Mod")));
+            final boolean entryOk = switch (loader) {
+                case "fabric" -> containsAscii(entry, "net/fabricmc/api/ClientModInitializer")
+                        && containsAscii(entry, "net/fabricmc/loader/api/entrypoint/PreLaunchEntrypoint")
+                        && !containsAscii(entry, "net/neoforged/fml/common/Mod")
+                        && !containsAscii(entry, "net/minecraftforge/fml/common/Mod");
+                case "forge" -> containsAscii(entry, "net/minecraftforge/fml/common/Mod")
+                        && !containsAscii(entry, "net/neoforged/fml/common/Mod")
+                        && !containsAscii(entry, "net/fabricmc/api/ClientModInitializer");
+                default -> containsAscii(entry, "net/neoforged/fml/common/Mod")
+                        && !containsAscii(entry, "net/minecraftforge/fml/common/Mod")
+                        && !containsAscii(entry, "net/fabricmc/api/ClientModInitializer");
+            };
+            check("the entry point belongs to this loader (" + loader + ')', entryOk);
 
-            if (forge) {
+            if ("forge".equals(loader)) {
                 check("Forge metadata targets loader 47+ (Minecraft 1.20.1)",
                         containsAscii(metadata, "loaderVersion=\"[47,)\""));
                 check("Forge metadata declares the ordering=BEFORE WaterMedia dependency",
                         containsAscii(metadata, "ordering=\"BEFORE\"") && containsAscii(metadata, "mandatory=true"));
-            } else {
+            } else if ("neoforge".equals(loader)) {
                 check("NeoForge metadata targets loader 3+ (Minecraft 1.21.1)",
                         containsAscii(metadata, "loaderVersion = \"[3,)\""));
                 check("NeoForge metadata declares the type=required ordering=BEFORE WaterMedia dependency",
@@ -200,6 +230,23 @@ public final class BridgeHarness {
                 check("NeoForge registers the mixin config through [[mixins]]",
                         containsAscii(metadata, "[[mixins]]")
                                 && containsAscii(metadata, "watermedia_android_bridge.mixins.json"));
+            } else {
+                // Fabric reads everything from fabric.mod.json, including load order workarounds:
+                // preLaunch must run the payload before WATERMeDIA initialises, because
+                // videolan4j's NativeDiscovery.start() is one-shot (an "attempted" flag makes
+                // every later call return false without retrying).
+                check("Fabric metadata is client only", containsAscii(metadata, "\"environment\": \"client\""));
+                check("Fabric metadata runs the payload from preLaunch",
+                        containsAscii(metadata, "\"preLaunch\"")
+                                && containsAscii(metadata, "org.watermedia.androidbridge.AndroidBridge"));
+                check("Fabric metadata registers the client entrypoint",
+                        containsAscii(metadata, "\"client\""));
+                check("Fabric metadata registers the mixin config",
+                        containsAscii(metadata, "\"mixins\"")
+                                && containsAscii(metadata, "watermedia_android_bridge.mixins.json"));
+                check("Fabric metadata depends on the loader, the API and this Minecraft version",
+                        containsAscii(metadata, "fabricloader") && containsAscii(metadata, "fabric-api")
+                                && containsAscii(metadata, pack15 ? "~1.20.1" : "~1.21.1"));
             }
 
             // The manifest only exists inside a jar; a classes directory has none, so the
@@ -207,7 +254,7 @@ public final class BridgeHarness {
             final byte[] manifest = readFromCodeSource(AndroidVlc.class, "META-INF/MANIFEST.MF");
             if (manifest == null) {
                 System.out.println("  (classes directory: the jar manifest is only checked on the packaged jar)");
-            } else if (forge) {
+            } else if ("forge".equals(loader)) {
                 check("Forge announces the mixin config through the jar manifest MixinConfigs",
                         containsAscii(manifest, "MixinConfigs")
                                 && containsAscii(manifest, "watermedia_android_bridge.mixins.json"));
@@ -340,14 +387,17 @@ public final class BridgeHarness {
                             && containsAscii(notice, "LGPL-2.1"));
 
             byte[] tomlLicence = readFromCodeSource(AndroidVlc.class, "META-INF/neoforge.mods.toml");
-            boolean spacedSyntax = true;
+            String licenceSyntax = "license = \"GPL-3.0-or-later\"";   // neoforge.mods.toml
             if (tomlLicence == null) {
                 tomlLicence = readFromCodeSource(AndroidVlc.class, "META-INF/mods.toml");
-                spacedSyntax = false;
+                licenceSyntax = "license=\"GPL-3.0-or-later\"";        // mods.toml
+            }
+            if (tomlLicence == null) {
+                tomlLicence = readFromCodeSource(AndroidVlc.class, "fabric.mod.json");
+                licenceSyntax = "\"license\": \"GPL-3.0-or-later\"";   // fabric.mod.json
             }
             check("the loader metadata declares the mod licence as GPL-3.0-or-later",
-                    containsAscii(tomlLicence, spacedSyntax ? "license = \"GPL-3.0-or-later\""
-                            : "license=\"GPL-3.0-or-later\""));
+                    containsAscii(tomlLicence, licenceSyntax));
         } catch (final Throwable t) {
             check("licence compliance could be inspected (" + t + ')', false);
         }

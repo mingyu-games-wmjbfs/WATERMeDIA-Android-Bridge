@@ -63,7 +63,7 @@ $deps = @(
 
 $runDir = Join-Path $root 'build\itest-run'
 
-function Invoke-Harness([string]$label, [string]$modPath, [string[]]$harnessArgs) {
+function Invoke-Harness([string]$label, [string]$modPath, [string[]]$harnessArgs, [string]$waterMediaOverride = '') {
   Write-Host ''
   Write-Host "################ $label ################"
   # the JVM's own output must be routed to the host, otherwise it lands in this
@@ -71,7 +71,8 @@ function Invoke-Harness([string]$label, [string]$modPath, [string[]]$harnessArgs
   # diagnostics to stderr, which must not abort the script.
   $previous = $ErrorActionPreference
   $ErrorActionPreference = 'Continue'
-  & $java -cp "$itest;$modPath;$deps" BridgeHarness @harnessArgs 2>&1 | ForEach-Object { Write-Host $_ }
+  $runDeps = if ($waterMediaOverride) { $deps.Replace($waterMedia, $waterMediaOverride) } else { $deps }
+  & $java -cp "$itest;$modPath;$runDeps" BridgeHarness @harnessArgs 2>&1 | ForEach-Object { Write-Host $_ }
   $code = $LASTEXITCODE
   $ErrorActionPreference = $previous
   return $code
@@ -82,6 +83,8 @@ $exits = @()
 # latter proves the payload and the loader metadata really are inside the artifact)
 $targets = @(
   @{ name = 'forge1201'; pattern = '*mc1.20.1-forge.jar' },
+  @{ name = 'fabric1201'; pattern = '*mc1.20.1-fabric.jar' },
+  @{ name = 'fabric1211'; pattern = '*mc1.21.1-fabric.jar' },
   @{ name = 'neoforge1211'; pattern = '*mc1.21.1-neoforge.jar' }
 )
 foreach ($target in $targets) {
@@ -102,6 +105,17 @@ foreach ($target in $targets) {
 # the real discovery chain, using WATERMeDIA's own Windows VLC (target independent)
 $modClasses = Join-Path $root 'build\classes\forge1201'
 $exits += Invoke-Harness 'mode=discover' $modClasses @('discover', (Join-Path $runDir 'game-discover'), $waterMedia)
+
+# The Fabric build declares WATERMeDIA 2.1.24 - 2.1.37, so the bridge's own code paths are
+# also run against the OLDEST supported WATERMeDIA (its compile classpath) - that catches a
+# call to an API that only exists in the newer generation.
+$waterMediaOld = Join-Path $root 'vendor\downloads\watermedia-2.1.24.jar'
+if (Test-Path $waterMediaOld) {
+  $exits += Invoke-Harness 'mode=install (fabric classes with WATERMeDIA 2.1.24)' `
+    (Join-Path $root 'build\classes\fabric1201') @('install', (Join-Path $runDir 'game-fabric-220124')) $waterMediaOld
+} else {
+  Write-Host '[skip] runtime check against WATERMeDIA 2.1.24 (jar not in vendor/downloads)'
+}
 
 Write-Host ''
 Write-Host ('exit codes: ' + ($exits -join ', '))
