@@ -5,6 +5,9 @@
 
 Android 上让 WATERMeDIA / WATERFrAMES 能用的补丁模组（内置 VLC for Android）。
 
+**1.0.5 覆盖四个版本**：`1.21.1 Fabric` · `1.21.1 NeoForge` · `1.20.1 Fabric` · `1.20.1 Forge`
+（四个 jar 的功能代码逐字节相同，按环境择一即可）。
+
 ## 适用环境
 
 | 项目 | 要求 |

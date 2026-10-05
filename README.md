@@ -6,7 +6,9 @@
 [![Forge](https://img.shields.io/badge/Forge-47.x-e8942a.svg)](#适用范围)
 [![NeoForge](https://img.shields.io/badge/NeoForge-21.1.235%2B-e8942a.svg)](#适用范围)
 [![WATERMeDIA](https://img.shields.io/badge/WATERMeDIA-2.1.36%20~%202.1.37-8b5cf6.svg)](#适用范围)
-[![Version](https://img.shields.io/badge/version-1.0.5-lightgrey.svg)](https://github.com/mingyu-games-wmjbfs/WATERMeDIA-Android-Bridge/releases)
+[![Version](https://img.shields.io/badge/version-1.0.5%20%C2%B7%201.21.1%20Fabric%20%2F%201.21.1%20NeoForge%20%2F%201.20.1%20Fabric%20%2F%201.20.1%20Forge-lightgrey.svg)](https://github.com/mingyu-games-wmjbfs/WATERMeDIA-Android-Bridge/releases)
+
+**1.0.5 覆盖四个版本**：`1.21.1 Fabric` · `1.21.1 NeoForge` · `1.20.1 Fabric` · `1.20.1 Forge` —— 四个 jar 的功能代码完全相同，按环境择一。
 
 [English](README.en.md) · **简体中文**
 

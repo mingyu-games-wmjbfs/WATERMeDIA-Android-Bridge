@@ -6,6 +6,9 @@
 
 A patch mod that makes WATERMeDIA / WATERFrAMES work on Android by bundling VLC for Android.
 
+**1.0.5 covers four builds**: `1.21.1 Fabric` · `1.21.1 NeoForge` · `1.20.1 Fabric` · `1.20.1 Forge`
+(the functional code is byte for byte identical in all four — pick the one matching your setup).
+
 ## Requirements
 
 | Item | Requirement |

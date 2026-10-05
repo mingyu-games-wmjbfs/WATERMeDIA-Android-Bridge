@@ -32,7 +32,7 @@ param(
   [string]$Branch = '',
   [string]$Message = '1.0.5 - fix the blank/white video screen (GLES pixel type, vmem vout, MediaCodec) and add video diagnostics',
   [string]$ReleaseTag = '',
-  [string]$ReleaseName = 'WATERMeDIA: Android Bridge 1.0.5',
+  [string]$ReleaseName = 'WATERMeDIA: Android Bridge 1.0.5 - 1.21.1 Fabric / 1.21.1 NeoForge / 1.20.1 Fabric / 1.20.1 Forge',
   [string]$ReleaseBody = '',
   [string]$Version = '',
   [string[]]$Topics = @(),
